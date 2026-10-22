@@ -1,4 +1,7 @@
-import { createCollectionContent } from '../createCollectionContent'
+import {
+  createCollectionContent,
+  resolveContentEntryGlob,
+} from '../createCollectionContent'
 import { getConfig } from '../getConfig'
 import { writeFile } from 'fs/promises'
 import { existsSync } from 'fs'
@@ -12,6 +15,50 @@ jest.spyOn(console, 'log').mockImplementation(() => {})
 
 beforeEach(() => {
   jest.clearAllMocks()
+})
+
+describe('resolveContentEntryGlob', () => {
+  it('anchors a local content glob to the config directory', () => {
+    expect(
+      resolveContentEntryGlob(
+        { name: 'local-docs', base: 'docs', pattern: '**/*.md' },
+        '/config/dir',
+        '/config',
+      ),
+    ).toBe('/config/dir/docs/**/*.md')
+  })
+
+  it('resolves a package content glob from node_modules', () => {
+    ;(existsSync as jest.Mock).mockReturnValue(true)
+
+    expect(
+      resolveContentEntryGlob(
+        {
+          name: 'component-docs',
+          packageName: '@patternfly/react-core',
+          pattern: '**/*.md',
+        },
+        '/config/dir',
+        '/config/dir',
+      ),
+    ).toBe('/config/dir/node_modules/@patternfly/react-core/**/*.md')
+  })
+
+  it('returns null for an unavailable package', () => {
+    ;(existsSync as jest.Mock).mockReturnValue(false)
+
+    expect(
+      resolveContentEntryGlob(
+        {
+          name: 'component-docs',
+          packageName: '@patternfly/react-core',
+          pattern: '**/*.md',
+        },
+        '/config/dir',
+        '/config/dir',
+      ),
+    ).toBeNull()
+  })
 })
 
 it('should call getConfig with the passed config file location', async () => {
