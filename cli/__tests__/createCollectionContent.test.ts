@@ -19,6 +19,8 @@ beforeEach(() => {
 
 describe('resolveContentEntryGlob', () => {
   it('anchors a local content glob to the config directory', () => {
+    ;(existsSync as jest.Mock).mockReturnValue(true)
+
     expect(
       resolveContentEntryGlob(
         { name: 'local-docs', base: 'docs', pattern: '**/*.md' },
@@ -26,6 +28,18 @@ describe('resolveContentEntryGlob', () => {
         '/config',
       ),
     ).toBe('/config/dir/docs/**/*.md')
+  })
+
+  it('returns null for an unavailable local content directory', () => {
+    ;(existsSync as jest.Mock).mockReturnValue(false)
+
+    expect(
+      resolveContentEntryGlob(
+        { name: 'local-docs', base: 'missing-docs', pattern: '**/*.md' },
+        '/config/dir',
+        '/config',
+      ),
+    ).toBeNull()
   })
 
   it('resolves a package content glob from node_modules', () => {

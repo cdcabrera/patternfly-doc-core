@@ -49,7 +49,10 @@ export function resolveContentEntryGlob(
   verbose?: boolean,
 ): string | null {
   if (contentEntry.base) {
-    return join(resolve(configDir, contentEntry.base), contentEntry.pattern)
+    const basePath = resolve(configDir, contentEntry.base)
+    return existsSync(basePath)
+      ? join(basePath, contentEntry.pattern)
+      : null
   }
 
   if (!contentEntry.packageName) {
