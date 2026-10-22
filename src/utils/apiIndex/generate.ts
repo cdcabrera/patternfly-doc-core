@@ -81,10 +81,9 @@ function extractExamplesWithTitles(
     return []
   }
 
-  // Match converted React and HTML examples.
-  // Supports various attribute orders and spacing patterns.
-  const exampleRegex =
-    /<LiveExample[^>]*\s(?:src|html)=\{\s*(\w+)\s*\}[^>]*\/?>/g
+  // Match <LiveExample> tags with src attribute containing an example name
+  // Supports various attribute orders and spacing patterns
+  const exampleRegex = /<LiveExample[^>]*\ssrc=\{\s*(\w+)\s*\}[^>]*\/?>/g
   const examples: { exampleName: string; title: string | null }[] = []
   const seen = new Set<string>()
   let match
