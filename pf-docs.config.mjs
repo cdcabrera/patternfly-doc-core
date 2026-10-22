@@ -77,17 +77,17 @@ export const config = {
       name: 'component-groups-docs',
     },
     // Extensions: ChatBot
-    {
-      packageName: '@patternfly/chatbot',
-      pattern: '**/patternfly-docs/**/*.md',
-      name: 'chatbot-docs',
-    },
+    // {
+    //  packageName: '@patternfly/chatbot',
+    //  pattern: '**/patternfly-docs/**/*.md',
+    //  name: 'chatbot-docs',
+    // },
     // Extensions: Topology
-    {
-      packageName: '@patternfly/react-topology',
-      pattern: '**/patternfly-docs/**/*.md',
-      name: 'topology-docs',
-    },
+    // {
+    //  packageName: '@patternfly/react-topology',
+    //  pattern: '**/patternfly-docs/**/*.md',
+    //  name: 'topology-docs',
+    // },
   ],
   outputDir: './dist',
   propsGlobs: [
