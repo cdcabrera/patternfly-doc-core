@@ -1,0 +1,73 @@
+// Jest Snapshot v1, https://goo.gl/fbAQLP
+
+exports[`patternfly-org apiIndex build matches the compact structural reflection for its source mode: local-structural-reflection 1`] = `
+{
+  "css": {
+    "count": 86,
+    "nextTier": {
+      "arrayItems": 5247,
+      "arrays": 86,
+      "objectProperties": 15741,
+      "objects": 5247,
+      "strings": 15741,
+    },
+    "type": "object",
+  },
+  "examples": {
+    "count": 130,
+    "nextTier": {
+      "arrayItems": 863,
+      "arrays": 130,
+      "objectProperties": 1726,
+      "objects": 863,
+      "strings": 1726,
+    },
+    "type": "object",
+  },
+  "pages": {
+    "count": 12,
+    "nextTier": {
+      "arrayItems": 288,
+      "arrays": 12,
+      "strings": 288,
+    },
+    "type": "object",
+  },
+  "propComponents": {
+    "count": 128,
+    "nextTier": {
+      "arrayItems": 429,
+      "arrays": 128,
+      "strings": 429,
+    },
+    "type": "object",
+  },
+  "sections": {
+    "count": 1,
+    "nextTier": {
+      "arrayItems": 14,
+      "arrays": 1,
+      "strings": 14,
+    },
+    "type": "object",
+  },
+  "tabs": {
+    "count": 288,
+    "nextTier": {
+      "arrayItems": 523,
+      "arrays": 288,
+      "strings": 523,
+    },
+    "type": "object",
+  },
+  "versions": {
+    "count": 1,
+    "nextTier": {
+      "strings": 1,
+    },
+    "type": "array",
+  },
+}
+`;
+
+exports[`patternfly-org apiIndex build matches the sorted JSON SHA-1 smoke snapshot for its source mode: local-sorted-sha1 1`] = `"ac067d210296c576c90c1a4ec99cf0604bce3be6"`;

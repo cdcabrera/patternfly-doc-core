@@ -1,0 +1,9 @@
+# Org API audit image (build context = doc-core repo root)
+.git
+node_modules
+.astro
+.wrangler
+tests/container/output
+tests/container/.org-audit-output.*
+tests/container/.org-audit-image-id.*
+.agent

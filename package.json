@@ -23,6 +23,7 @@
     "prettier": "prettier --write ./src",
     "lint": "eslint . --cache --cache-strategy content",
     "test": "jest",
+    "test:apiAudit": "export ORG_AUDIT_DOC_CORE_SOURCE=${ORG_AUDIT_DOC_CORE_SOURCE:-local}; tests/container/utils/build-org-api-index.sh && jest -c jest.org-audit.config.ts -u",
     "test:watch": "jest --watch",
     "semantic-release": "semantic-release",
     "cf-typegen": "wrangler types",
