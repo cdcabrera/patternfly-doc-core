@@ -138,6 +138,8 @@ async function processFile(file: string): Promise<void> {
 }
 
 export async function convertToMDX(globPath: string): Promise<void> {
-  const files = await glob(globPath)
-  await Promise.all(files.map(processFile))
+  const files = (await glob(globPath)).sort()
+  for (const file of files) {
+    await processFile(file)
+  }
 }

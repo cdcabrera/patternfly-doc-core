@@ -37,4 +37,9 @@ coverage/
 
 .wrangler/
 
+tests/audit/output/
+tests/container/output/
+tests/container/.paired-record/
+tests/container/.stabilize-record/
+
 temp

@@ -1,8 +1,41 @@
 import { join } from 'path'
-import { readFile } from 'fs/promises'
+import { access, readFile } from 'fs/promises'
 import type { ApiIndex } from './generate'
 import { getOutputDir } from '../getOutputDir'
-import { createIndexKey } from'../apiHelpers';
+import { createIndexKey } from '../apiHelpers'
+
+export const API_INDEX_COMPLETE_MARKER = '.apiIndex.complete'
+
+async function pathExists(path: string): Promise<boolean> {
+  try {
+    await access(path)
+    return true
+  } catch {
+    return false
+  }
+}
+
+/** Waits for a fully generated apiIndex.json (see generate.ts completion marker). */
+export async function waitForCompleteApiIndexOnDisk(): Promise<ApiIndex> {
+  for (let attempt = 0; attempt < 600; attempt++) {
+    try {
+      const index = await getApiIndex()
+      const outputDir = await getOutputDir()
+      const markerPath = join(outputDir, API_INDEX_COMPLETE_MARKER)
+      if (
+        (await pathExists(markerPath)) &&
+        index.versions.length > 0 &&
+        Object.keys(index.examples).length > 0
+      ) {
+        return index
+      }
+    } catch {
+      // index not written yet
+    }
+    await new Promise((resolve) => setTimeout(resolve, 100))
+  }
+  throw new Error('Timed out waiting for complete apiIndex.json on disk')
+}
 
 /**
  * Reads and parses the API index file

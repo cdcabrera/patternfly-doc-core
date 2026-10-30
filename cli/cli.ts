@@ -18,6 +18,10 @@ import {
 } from './buildPropsData.js'
 import { hasFile } from './hasFile.js'
 import { convertToMDX } from './convertToMDX.js'
+import {
+  precomputeExamplesByKey,
+  writePrecomputedExamplesCache,
+} from './precomputeExamplesByPath.js'
 import { mkdir, copyFile } from 'fs/promises'
 import { fileURLToPath } from 'url'
 import { fileExists } from './fileExists.js'
@@ -99,25 +103,23 @@ async function transformMDContentToMDX(verbose = false) {
     ? resolve(currentDir, config.repoRoot)
     : currentDir
 
-  await Promise.all(
-    config.content.map(async (contentObj) => {
-      const globPath = resolveContentEntryGlob(
-        contentObj,
-        currentDir,
-        repoRootDir,
-        verbose,
+  for (const contentObj of config.content) {
+    const globPath = resolveContentEntryGlob(
+      contentObj,
+      currentDir,
+      repoRootDir,
+      verbose,
+    )
+
+    if (!globPath) {
+      throw new Error(
+        `Unable to resolve documentation content "${contentObj.name}". ` +
+          'Check its base or packageName configuration.',
       )
+    }
 
-      if (!globPath) {
-        throw new Error(
-          `Unable to resolve documentation content "${contentObj.name}". ` +
-            'Check its base or packageName configuration.',
-        )
-      }
-
-      await convertToMDX(globPath)
-    }),
-  )
+    await convertToMDX(globPath)
+  }
 }
 
 async function initializeApiIndex(program: Command) {
@@ -167,9 +169,30 @@ async function buildProject(program: Command): Promise<DocsConfig | undefined> {
   await updateContent(program)
   await transformMDContentToMDX(verbose)
   await generateProps(program, true)
+
+  process.env.PF_ASTRO_ROOT = astroRoot
+
+  const staleIndexPath = join(absoluteOutputDir, 'apiIndex.json')
+  const staleLockPath = join(absoluteOutputDir, '.apiIndex.generating')
+  const staleCompletePath = join(absoluteOutputDir, '.apiIndex.complete')
+  const stalePrecomputedPath = join(absoluteOutputDir, '.precomputed-examples.json')
+  await import('fs/promises').then(({ unlink }) =>
+    Promise.all([
+      unlink(staleIndexPath).catch(() => undefined),
+      unlink(staleLockPath).catch(() => undefined),
+      unlink(staleCompletePath).catch(() => undefined),
+      unlink(stalePrecomputedPath).catch(() => undefined),
+    ]),
+  )
+
   await initializeApiIndex(program)
 
+  const precomputedExamples = await precomputeExamplesByKey(config, currentDir)
+  await writePrecomputedExamplesCache(absoluteOutputDir, precomputedExamples)
+
   const docsOutputDir = join(absoluteOutputDir, 'docs')
+
+  await sync({ root: astroRoot })
 
   await build({
     root: astroRoot,

@@ -1,0 +1,73 @@
+// Jest Snapshot v1, https://goo.gl/fbAQLP
+
+exports[`doc-core apiIndex paired build matches the compact structural reflection: audit-structural-reflection 1`] = `
+{
+  "css": {
+    "count": 86,
+    "nextTier": {
+      "arrayItems": 5247,
+      "arrays": 86,
+      "objectProperties": 15741,
+      "objects": 5247,
+      "strings": 15741,
+    },
+    "type": "object",
+  },
+  "examples": {
+    "count": 92,
+    "nextTier": {
+      "arrayItems": 730,
+      "arrays": 92,
+      "objectProperties": 1460,
+      "objects": 730,
+      "strings": 1460,
+    },
+    "type": "object",
+  },
+  "pages": {
+    "count": 4,
+    "nextTier": {
+      "arrayItems": 114,
+      "arrays": 4,
+      "strings": 114,
+    },
+    "type": "object",
+  },
+  "propComponents": {
+    "count": 86,
+    "nextTier": {
+      "arrayItems": 313,
+      "arrays": 86,
+      "strings": 313,
+    },
+    "type": "object",
+  },
+  "sections": {
+    "count": 1,
+    "nextTier": {
+      "arrayItems": 6,
+      "arrays": 1,
+      "strings": 6,
+    },
+    "type": "object",
+  },
+  "tabs": {
+    "count": 114,
+    "nextTier": {
+      "arrayItems": 219,
+      "arrays": 114,
+      "strings": 219,
+    },
+    "type": "object",
+  },
+  "versions": {
+    "count": 1,
+    "nextTier": {
+      "strings": 1,
+    },
+    "type": "array",
+  },
+}
+`;
+
+exports[`doc-core apiIndex paired build matches the sorted JSON SHA-1 smoke snapshot: audit-sorted-sha1 1`] = `"22e3b05954db69c0fdc5a123ad77f5c25ef1b611"`;

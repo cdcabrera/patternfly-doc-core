@@ -1,0 +1,102 @@
+# syntax=docker/dockerfile:1
+# Build context: patternfly-doc-core repo root.
+# --target org-audit-default uses the package already locked by patternfly-org.
+# --target org-audit-npm installs doc-core from the npm registry.
+# --target org-audit-local copies and builds this checkout before linking it.
+# --target org-audit-runtime runs yarn ci:build:doc-core at container start with a mounted org checkout.
+FROM docker.io/library/node:22-bookworm AS org-audit-base
+
+RUN apt-get update \
+  && apt-get install -y --no-install-recommends git ca-certificates \
+  && rm -rf /var/lib/apt/lists/*
+
+WORKDIR /patternfly-org
+
+ARG ORG_REPO=https://github.com/patternfly/patternfly-org.git
+ARG ORG_REF=main
+ARG DOC_CORE_GIT_SHA=
+
+ENV DOC_CORE_GIT_SHA="${DOC_CORE_GIT_SHA}"
+
+# ORG_REF may be a branch name or a full commit SHA (Phase 2 pin).
+RUN git init . \
+  && git remote add origin "${ORG_REPO}" \
+  && git fetch --depth 1 origin "${ORG_REF}" \
+  && git checkout FETCH_HEAD
+
+RUN corepack enable
+
+COPY tests/container/utils/install-doc-core.sh /usr/local/bin/install-doc-core.sh
+COPY tests/container/utils/entrypoint.sh /usr/local/bin/entrypoint.sh
+COPY tests/container/utils/run-org-site-build.sh /usr/local/bin/run-org-site-build.sh
+RUN chmod +x /usr/local/bin/install-doc-core.sh /usr/local/bin/entrypoint.sh /usr/local/bin/run-org-site-build.sh
+
+FROM org-audit-base AS org-audit-git-yarn
+
+RUN yarn install --immutable
+
+ENV AUDIT_RUNTIME_BUILD=1
+ENV NODE_OPTIONS=--max-old-space-size=8192
+ENV SITE_DIST=/patternfly-org/packages/site/dist
+ENTRYPOINT ["/usr/local/bin/entrypoint.sh"]
+
+FROM org-audit-base AS org-audit-default
+
+RUN yarn install --immutable
+RUN DOC_CORE_SOURCE=default /usr/local/bin/install-doc-core.sh
+
+ENV NODE_OPTIONS=--max-old-space-size=8192
+
+RUN yarn ci:build:doc-core
+
+ENV SITE_DIST=/patternfly-org/packages/site/dist
+ENTRYPOINT ["/usr/local/bin/entrypoint.sh"]
+
+FROM org-audit-base AS org-audit-npm
+
+ARG DOC_CORE_NPM_SPEC=latest
+RUN DOC_CORE_SOURCE=npm DOC_CORE_NPM_SPEC="${DOC_CORE_NPM_SPEC}" /usr/local/bin/install-doc-core.sh
+
+ENV NODE_OPTIONS=--max-old-space-size=8192
+
+RUN yarn ci:build:doc-core
+
+ENV SITE_DIST=/patternfly-org/packages/site/dist
+ENTRYPOINT ["/usr/local/bin/entrypoint.sh"]
+
+FROM docker.io/library/node:22-bookworm AS doc-core-local
+
+WORKDIR /patternfly-doc-core
+COPY . .
+
+FROM org-audit-base AS org-audit-local
+
+COPY --from=doc-core-local /patternfly-doc-core /patternfly-doc-core
+RUN DOC_CORE_SOURCE=local /usr/local/bin/install-doc-core.sh
+
+ENV NODE_OPTIONS=--max-old-space-size=8192
+
+RUN yarn ci:build:doc-core
+
+ENV SITE_DIST=/patternfly-org/packages/site/dist
+ENTRYPOINT ["/usr/local/bin/entrypoint.sh"]
+
+FROM docker.io/library/node:22-bookworm AS org-audit-runtime
+
+RUN apt-get update \
+  && apt-get install -y --no-install-recommends git ca-certificates \
+  && rm -rf /var/lib/apt/lists/*
+
+RUN corepack enable
+
+WORKDIR /patternfly-org
+
+COPY tests/container/utils/install-doc-core.sh /usr/local/bin/install-doc-core.sh
+COPY tests/container/utils/entrypoint.sh /usr/local/bin/entrypoint.sh
+COPY tests/container/utils/run-org-site-build.sh /usr/local/bin/run-org-site-build.sh
+RUN chmod +x /usr/local/bin/install-doc-core.sh /usr/local/bin/entrypoint.sh /usr/local/bin/run-org-site-build.sh
+
+ENV AUDIT_RUNTIME_BUILD=1
+ENV NODE_OPTIONS=--max-old-space-size=8192
+ENV SITE_DIST=/patternfly-org/packages/site/dist
+ENTRYPOINT ["/usr/local/bin/entrypoint.sh"]
