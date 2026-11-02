@@ -8,6 +8,9 @@ import cloudflare from '@astrojs/cloudflare';
 // https://astro.build/config
 export default defineConfig({
   integrations: [react(), mdx()],
+  build: {
+    concurrency: 1,
+  },
   vite: {
     ssr: {
       noExternal: ["@patternfly/*", "react-dropzone"],

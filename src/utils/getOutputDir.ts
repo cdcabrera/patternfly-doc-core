@@ -1,4 +1,4 @@
-import { join } from 'path'
+import { join, resolve } from 'path'
 import { getConfig } from '../../cli/getConfig'
 
 export async function getOutputDir(): Promise<string> {
@@ -15,5 +15,5 @@ export async function getOutputDir(): Promise<string> {
     )
   }
 
-  return config.outputDir
+  return resolve(process.cwd(), config.outputDir)
 }
