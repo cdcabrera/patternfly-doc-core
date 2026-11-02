@@ -18,6 +18,10 @@ import {
 } from './buildPropsData.js'
 import { hasFile } from './hasFile.js'
 import { convertToMDX } from './convertToMDX.js'
+import {
+  precomputeExamplesByKey,
+  writePrecomputedExamplesCache,
+} from './precomputeExamplesByPath.js'
 import { mkdir, copyFile } from 'fs/promises'
 import { fileURLToPath } from 'url'
 import { fileExists } from './fileExists.js'
@@ -167,6 +171,9 @@ async function buildProject(program: Command): Promise<DocsConfig | undefined> {
   await updateContent(program)
   await transformMDContentToMDX(verbose)
   await generateProps(program, true)
+
+  const precomputedExamples = await precomputeExamplesByKey(config, currentDir)
+  await writePrecomputedExamplesCache(absoluteOutputDir, precomputedExamples)
   await initializeApiIndex(program)
 
   const docsOutputDir = join(absoluteOutputDir, 'docs')

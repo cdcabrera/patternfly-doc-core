@@ -1,6 +1,7 @@
 /* eslint-disable no-console */
-import { join } from 'path'
-import { writeFile, mkdir } from 'fs/promises'
+import { join, isAbsolute, resolve } from 'path'
+import { fileURLToPath } from 'url'
+import { access, writeFile, mkdir, readFile } from 'fs/promises'
 import { getCollection } from 'astro:content'
 import type { CollectionKey } from 'astro:content'
 import { content } from '../../content'
@@ -83,7 +84,7 @@ function extractExamplesWithTitles(
 
   // Match <LiveExample> tags with src attribute containing an example name
   // Supports various attribute orders and spacing patterns
-  const exampleRegex = /<LiveExample[^>]*\ssrc=\{\s*(\w+)\s*\}[^>]*\/?>/g
+  const exampleRegex = /<LiveExample[^>]*src=\{\s*(\w+)\s*\}[^>]*\/?>/g
   const examples: { exampleName: string; title: string | null }[] = []
   const seen = new Set<string>()
   let match
@@ -106,15 +107,149 @@ function extractExamplesWithTitles(
   return examples
 }
 
+function mergeExampleLists(
+  existing: { exampleName: string; title: string | null }[],
+  incoming: { exampleName: string; title: string | null }[],
+): { exampleName: string; title: string | null }[] {
+  const merged = [...existing]
+  for (const ex of incoming) {
+    if (!merged.some((item) => item.exampleName === ex.exampleName)) {
+      merged.push(ex)
+    }
+  }
+  return merged
+}
+
+type PrecomputedExamplesByKey = Record<
+  string,
+  { exampleName: string; title: string | null }[]
+>
+
+async function readPrecomputedExamplesByKey(
+  outputDir: string,
+): Promise<PrecomputedExamplesByKey | null> {
+  const cachePath = join(outputDir, '.precomputed-examples.json')
+  // Some consumers mock fs/promises without access(); in that case no cache is available.
+  if (typeof access !== 'function') {
+    return null
+  }
+  try {
+    await access(cachePath)
+    const raw = await readFile(cachePath, 'utf8')
+    const parsed = JSON.parse(raw) as PrecomputedExamplesByKey
+    if (
+      Object.keys(parsed).length === 0 ||
+      !Object.values(parsed).every(Array.isArray)
+    ) {
+      return null
+    }
+    return parsed
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code === 'ENOENT') {
+      return null
+    }
+    throw error
+  }
+}
+
+function normalizeContentEntryFilePath(entry: {
+  filePath?: string
+  base?: string
+}): string | undefined {
+  if (!entry.filePath) {
+    return undefined
+  }
+
+  let filePath = entry.filePath
+  if (filePath.startsWith('file://')) {
+    try {
+      filePath = fileURLToPath(filePath)
+    } catch {
+      // keep original
+    }
+  }
+
+  if (isAbsolute(filePath)) {
+    return filePath
+  }
+
+  const astroRoot = process.env.PF_ASTRO_ROOT
+  const cwd = process.cwd()
+  const candidates = [
+    entry.base ? resolve(entry.base, filePath) : undefined,
+    astroRoot ? resolve(astroRoot, filePath) : undefined,
+    resolve(cwd, filePath),
+    entry.base ? resolve(cwd, entry.base, filePath) : undefined,
+  ].filter((candidate): candidate is string => Boolean(candidate))
+
+  for (const candidate of candidates) {
+    if (isAbsolute(candidate)) {
+      return candidate
+    }
+  }
+
+  return candidates[0]
+}
+
+async function readContentEntryBody(entry: {
+  filePath?: string
+  body?: string
+  base?: string
+}): Promise<string> {
+  if (!entry.filePath) {
+    return entry.body || ''
+  }
+
+  const normalizedPath = normalizeContentEntryFilePath(entry)
+  const astroRoot = process.env.PF_ASTRO_ROOT
+  const cwd = process.cwd()
+  let filePath = entry.filePath
+  if (filePath.startsWith('file://')) {
+    try {
+      filePath = fileURLToPath(filePath)
+    } catch {
+      // keep original
+    }
+  }
+
+  const readCandidates = [
+    normalizedPath,
+    entry.base && !isAbsolute(filePath) ? resolve(entry.base, filePath) : undefined,
+    astroRoot && !isAbsolute(filePath) ? resolve(astroRoot, filePath) : undefined,
+    !isAbsolute(filePath) ? resolve(cwd, filePath) : undefined,
+    entry.base ? resolve(cwd, entry.base, filePath) : undefined,
+    isAbsolute(filePath) ? filePath : undefined,
+  ].filter((candidate): candidate is string => Boolean(candidate))
+
+  const uniqueCandidates = [...new Set(readCandidates)]
+  for (let attempt = 0; attempt < 5; attempt++) {
+    for (const candidate of uniqueCandidates) {
+      try {
+        return await readFile(candidate, 'utf8')
+      } catch {
+        // try next candidate
+      }
+    }
+    if (attempt < 4) {
+      await new Promise((resolve) => setTimeout(resolve, 25 * (attempt + 1)))
+    }
+  }
+
+  return entry.body || ''
+}
+
 /**
- * Generates API index by analyzing all content collections
- * Extracts versions, sections, pages, and tabs into a hierarchical structure
- * This runs during build time when getCollection() is available
- *
- * @returns Promise resolving to complete API index structure
+ * Builds API index by analyzing all content collections.
  */
-export async function generateApiIndex(): Promise<ApiIndex> {
+async function generateApiIndexFromCollections(): Promise<ApiIndex> {
   console.log('Generating API index from content collections...')
+
+  const outputDir = await getOutputDir()
+  const precomputedExamplesByKey = await readPrecomputedExamplesByKey(outputDir)
+  const usePrecomputedExamples = Boolean(
+    precomputedExamplesByKey &&
+      Object.keys(precomputedExamplesByKey).length > 0,
+  )
 
   const index: ApiIndex = {
     versions: [],
@@ -140,27 +275,53 @@ export async function generateApiIndex(): Promise<ApiIndex> {
     const collectionsToFetch = content
       .filter((entry: any) => entry.version === version)
       .map((entry: any) => entry.name as CollectionKey)
+      .sort((a, b) => String(a).localeCompare(String(b)))
 
-    const collections = await Promise.all(
-      collectionsToFetch.map((name) => getCollection(name)),
+    const flatEntries: Array<
+      Awaited<ReturnType<typeof getCollection>>[number] & { base?: string }
+    > = []
+    for (const name of collectionsToFetch) {
+      const contentDef = content.find(
+        (entry: any) => entry.name === name && entry.version === version,
+      )
+      const collectionEntries = await getCollection(name)
+      for (const entry of collectionEntries) {
+        flatEntries.push({ ...entry, base: contentDef?.base })
+      }
+    }
+    flatEntries.sort((a, b) => String(a.filePath).localeCompare(String(b.filePath)))
+
+    const mdSourcesWithMdx = new Set(
+      flatEntries
+        .map((entry) => entry.filePath)
+        .filter((filePath): filePath is string => filePath?.endsWith('.mdx') ?? false)
+        .map((filePath) => `${filePath.slice(0, -4)}.md`),
     )
-
-    const flatEntries = collections.flat()
 
     // Collect sections, pages, and tabs in a single pass
     const sections = new Set<string>()
     const sectionPages: Record<string, Set<string>> = {}
     const pageTabs: Record<string, Set<string>> = {}
-    const tabExamples: Record<string, { exampleName: string; title: string | null }[]> = {}
+    let tabExamples: Record<string, { exampleName: string; title: string | null }[]> = {}
     const pageCss: Record<string, { name: string; value: string; var: string }[]> = {}
     const pageCssPrefixes: Record<string, string | string[]> = {}
     const deprecatedPropComponents: Record<string, string[]> = {}
 
-    flatEntries.forEach((entry: any) => {
+    for (const entry of flatEntries) {
       const { section, subsection, id } = entry.data
       if (!section) {
-        return
+        continue
       }
+
+      if (
+        entry.filePath?.endsWith('.md') &&
+        mdSourcesWithMdx.has(entry.filePath)
+      ) {
+        continue
+      }
+
+      const pathForTabLogic =
+        normalizeContentEntryFilePath(entry) || String(entry.filePath || '')
 
       // Flatten subsections into page name using underscores
       // e.g., subsection="forms", id="checkbox" becomes page="forms_checkbox"
@@ -182,8 +343,10 @@ export async function generateApiIndex(): Promise<ApiIndex> {
 
       // Collect tab
       const entryTab =
-        entry.data.tab || entry.data.source || getDefaultTabForApi(entry.filePath)
-      const tab = addDemosOrDeprecated(entryTab, entry.filePath)
+        entry.data.tab ||
+        entry.data.source ||
+        getDefaultTabForApi(pathForTabLogic)
+      const tab = addDemosOrDeprecated(entryTab, pathForTabLogic)
       if (!pageTabs[tabKey]) {
         pageTabs[tabKey] = new Set()
       }
@@ -196,11 +359,21 @@ export async function generateApiIndex(): Promise<ApiIndex> {
         deprecatedPropComponents[tabKey] = [...new Set<string>(entry.data.propComponents)]
       }
 
-      // Collect examples for this tab
-      const exampleKey = `${tabKey}::${tab}`
-      const examplesWithTitles = extractExamplesWithTitles(entry.body || '')
-      if (examplesWithTitles.length > 0) {
-        tabExamples[exampleKey] = examplesWithTitles
+      // Collect examples for this tab — read source file; entry.body is flaky under Cloudflare prerender.
+      if (!usePrecomputedExamples) {
+        const exampleKey = `${tabKey}::${tab}`
+        let examplesWithTitles = extractExamplesWithTitles(entry.body || '')
+        if (examplesWithTitles.length === 0 && entry.body === undefined) {
+          examplesWithTitles = extractExamplesWithTitles(
+            await readContentEntryBody(entry),
+          )
+        }
+        if (examplesWithTitles.length > 0) {
+          tabExamples[exampleKey] = mergeExampleLists(
+            tabExamples[exampleKey] || [],
+            examplesWithTitles,
+          )
+        }
       }
 
       // Collect CSS prefixes for pages - we'll extract tokens later
@@ -208,7 +381,7 @@ export async function generateApiIndex(): Promise<ApiIndex> {
       if (entry.data.cssPrefix && !pageCssPrefixes[tabKey]) {
         pageCssPrefixes[tabKey] = entry.data.cssPrefix
       }
-    })
+    }
 
     Object.entries(deprecatedPropComponents).forEach(([key, propComponents]) => {
       if (!index.propComponents![key]) {
@@ -242,9 +415,25 @@ export async function generateApiIndex(): Promise<ApiIndex> {
       index.tabs[key] = Array.from(tabs).sort(sortSources)
     })
 
-    Object.entries(tabExamples).forEach(([key, examples]) => {
-      index.examples[key] = examples
-    })
+    if (usePrecomputedExamples && precomputedExamplesByKey) {
+      tabExamples = {}
+      for (const [key, examples] of Object.entries(precomputedExamplesByKey)) {
+        if (!key.startsWith(`${version}::`)) {
+          continue
+        }
+        tabExamples[key] = [...examples].sort((a, b) =>
+          a.exampleName.localeCompare(b.exampleName),
+        )
+      }
+    }
+
+    Object.entries(tabExamples)
+      .sort(([a], [b]) => a.localeCompare(b))
+      .forEach(([key, examples]) => {
+        index.examples[key] = [...examples].sort((a, b) =>
+          a.exampleName.localeCompare(b.exampleName),
+        )
+      })
 
     // Add CSS token objects to index
     Object.entries(pageCss).forEach(([key, tokens]) => {
@@ -253,6 +442,17 @@ export async function generateApiIndex(): Promise<ApiIndex> {
   }
 
   return index
+}
+
+/**
+ * Generates API index by analyzing all content collections
+ * Extracts versions, sections, pages, and tabs into a hierarchical structure
+ * This runs during build time when getCollection() is available
+ *
+ * @returns Promise resolving to complete API index structure
+ */
+export async function generateApiIndex(): Promise<ApiIndex> {
+  return generateApiIndexFromCollections()
 }
 
 /**
