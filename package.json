@@ -24,8 +24,8 @@
     "lint": "eslint . --cache --cache-strategy content",
     "test": "jest",
     "test:watch": "jest --watch",
-    "test:org": "tests/container/run.sh && jest -c jest.org-audit.config.ts",
-    "test:org:update": "tests/container/run.sh && jest -c jest.org-audit.config.ts -u",
+    "test:org": "tests/container/run.sh && npm run test:org-jest -- -u",
+    "test:org-jest": "jest -c jest.org-audit.config.ts",
     "semantic-release": "semantic-release",
     "cf-typegen": "wrangler types",
     "clean": "rm -rf dist .astro .wrangler"

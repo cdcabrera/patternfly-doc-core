@@ -1,0 +1,3 @@
+// Jest Snapshot v1, https://goo.gl/fbAQLP
+
+exports[`PatternFly Org apiIndex Audit matches canonical SHA-1 snapshot: canonical-docs-sha1 1`] = `"4c671cee1d46c8f0633e7408265f09d8710dd348"`;

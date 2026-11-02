@@ -16,19 +16,11 @@ else
   exit 1
 fi
 
-echo "==> Building local doc-core CLI & packaging tarball..."
+echo "==> Building container image using ${CONTAINER_ENGINE}..."
 cd "${ROOT_DIR}"
-npm run build:cli
-TARBALL_NAME="$(npm pack --pack-destination="${ROOT_DIR}/tests/container")"
-TARBALL_PATH="tests/container/${TARBALL_NAME}"
-
-echo "==> Building container image..."
-DOCKER_BUILDKIT=1 "${CONTAINER_ENGINE}" build \
+${CONTAINER_ENGINE} build \
   -f tests/container/Containerfile \
-  --build-arg DOC_CORE_TARBALL="${TARBALL_PATH}" \
   -t pf-doc-core-audit:latest .
-
-rm -f "${TARBALL_PATH}"
 
 echo "==> Extracting build artifacts..."
 "${CONTAINER_ENGINE}" run --rm \

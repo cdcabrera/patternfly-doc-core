@@ -9,10 +9,25 @@ const outputDir = join(__dirname, 'output')
 const docsPath = join(outputDir, 'apiIndex.docs.json')
 const rootPath = join(outputDir, 'apiIndex.dist-root.json')
 
+function canonicalizeJson(value: any): any {
+  if (Array.isArray(value)) {
+    return value.map(canonicalizeJson)
+  }
+  if (value !== null && typeof value === 'object') {
+    return Object.fromEntries(
+      Object.keys(value)
+        .sort()
+        .map((key) => [key, canonicalizeJson(value[key])])
+    )
+  }
+  return value
+}
+
 function getCanonicalSha1(filePath: string): string {
   const raw = readFileSync(filePath, 'utf-8')
   const parsed = JSON.parse(raw)
-  const canonical = JSON.stringify(parsed, Object.keys(parsed).sort())
+  const canonical = JSON.stringify(canonicalizeJson(parsed))
+
   return crypto.createHash('sha1').update(canonical).digest('hex')
 }
 

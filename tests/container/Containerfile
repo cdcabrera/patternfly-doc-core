@@ -1,5 +1,18 @@
 # syntax=docker/dockerfile:1
-FROM docker.io/library/node:22-bookworm AS org-base
+
+# --- Stage 1: Build local doc-core from source ---
+FROM node:22-bookworm AS doc-core-builder
+WORKDIR /app
+
+COPY package*.json ./
+RUN npm ci
+
+COPY . .
+RUN npm run build:cli
+RUN npm pack --pack-destination=/tmp
+
+# --- Stage 2: Cache patternfly-org base ---
+FROM node:22-bookworm AS org-base
 
 RUN apt-get update && apt-get install -y --no-install-recommends git ca-certificates && rm -rf /var/lib/apt/lists/*
 RUN corepack enable
@@ -14,13 +27,13 @@ RUN git clone --depth 1 --branch "${ORG_REF}" "${ORG_REPO}" .
 RUN --mount=type=cache,target=/usr/local/share/.cache/yarn/v6 \
     yarn install --immutable
 
+# --- Stage 3: Run Org build with local doc-core ---
 FROM org-base AS audit-runner
 
 WORKDIR /patternfly-org
 ENV NODE_OPTIONS="--max-old-space-size=8192"
 
-ARG DOC_CORE_TARBALL
-COPY ${DOC_CORE_TARBALL} /tmp/patternfly-doc-core.tgz
+COPY --from=doc-core-builder /tmp/patternfly-patternfly-doc-core-*.tgz /tmp/patternfly-doc-core.tgz
 
 RUN yarn add @patternfly/patternfly-doc-core@file:/tmp/patternfly-doc-core.tgz
 RUN yarn ci:build:doc-core
