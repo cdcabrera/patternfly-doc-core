@@ -1,7 +1,7 @@
 /* eslint-disable no-console */
 import type { APIRoute, GetStaticPaths } from 'astro'
-import { generateAndWriteApiIndex } from '../../../../../../utils/apiIndex/generate'
 import { getApiIndex } from '../../../../../../utils/apiIndex/get'
+import { generateApiIndex } from '../../../../../../utils/apiIndex/generate'
 import {
   createJsonResponse,
   createTextResponse,
@@ -14,7 +14,7 @@ export const prerender = true
 export const getStaticPaths: GetStaticPaths = async () => {
   // Generate index file for server-side routes to use
   // This runs once during build when getCollection() is available
-  const index = await generateAndWriteApiIndex()
+  const index = await generateApiIndex()
 
   const paths: {
     params: { version: string; section: string; page: string; tab: string }
