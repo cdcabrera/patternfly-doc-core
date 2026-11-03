@@ -1,7 +1,7 @@
 /* eslint-disable no-console */
 import { join, isAbsolute, resolve } from 'path'
 import { fileURLToPath } from 'url'
-import { access, writeFile, mkdir, readFile } from 'fs/promises'
+import { access, writeFile, mkdir, open, unlink, readFile, rename } from 'fs/promises'
 import { getCollection } from 'astro:content'
 import type { CollectionKey } from 'astro:content'
 import { content } from '../../content'
@@ -10,6 +10,7 @@ import { getDefaultTabForApi } from '../packageUtils'
 import { getOutputDir } from '../getOutputDir'
 import { addSubsection } from '../case'
 import { extractReactTokens } from '../extractReactTokens'
+import { API_INDEX_COMPLETE_MARKER, getApiIndex } from './get'
 
 const SOURCE_ORDER: Record<string, number> = {
   react: 1,
@@ -277,9 +278,9 @@ async function generateApiIndexFromCollections(): Promise<ApiIndex> {
       .map((entry: any) => entry.name as CollectionKey)
       .sort((a, b) => String(a).localeCompare(String(b)))
 
-    const flatEntries: Array<
-      Awaited<ReturnType<typeof getCollection>>[number] & { base?: string }
-    > = []
+    const flatEntries: (Awaited<ReturnType<typeof getCollection>>[number] & {
+      base?: string
+    })[] = []
     for (const name of collectionsToFetch) {
       const contentDef = content.find(
         (entry: any) => entry.name === name && entry.version === version,
@@ -362,11 +363,11 @@ async function generateApiIndexFromCollections(): Promise<ApiIndex> {
       // Collect examples for this tab — read source file; entry.body is flaky under Cloudflare prerender.
       if (!usePrecomputedExamples) {
         const exampleKey = `${tabKey}::${tab}`
-        let examplesWithTitles = extractExamplesWithTitles(entry.body || '')
-        if (examplesWithTitles.length === 0 && entry.body === undefined) {
-          examplesWithTitles = extractExamplesWithTitles(
-            await readContentEntryBody(entry),
-          )
+        let examplesWithTitles = extractExamplesWithTitles(
+          await readContentEntryBody(entry),
+        )
+        if (examplesWithTitles.length === 0 && typeof entry.body === 'string') {
+          examplesWithTitles = extractExamplesWithTitles(entry.body)
         }
         if (examplesWithTitles.length > 0) {
           tabExamples[exampleKey] = mergeExampleLists(
@@ -444,6 +445,62 @@ async function generateApiIndexFromCollections(): Promise<ApiIndex> {
   return index
 }
 
+/** One in-process generation per build; avoids concurrent getCollection() during prerender. */
+let generateApiIndexPromise: Promise<ApiIndex> | null = null
+
+async function readCompleteApiIndexFromDisk(): Promise<ApiIndex | null> {
+  try {
+    const outputDir = await getOutputDir()
+    const markerPath = join(outputDir, API_INDEX_COMPLETE_MARKER)
+    try {
+      await readFile(markerPath, 'utf8')
+    } catch {
+      return null
+    }
+    const index = await getApiIndex()
+    if (index.versions.length > 0 && Object.keys(index.examples).length > 0) {
+      return index
+    }
+  } catch {
+    return null
+  }
+  return null
+}
+
+export async function generateAndPersistApiIndex(): Promise<ApiIndex> {
+  const outputDir = await getOutputDir()
+  const lockPath = join(outputDir, '.apiIndex.generating')
+  const markerPath = join(outputDir, API_INDEX_COMPLETE_MARKER)
+
+  for (let attempt = 0; attempt < 600; attempt++) {
+    const onDisk = await readCompleteApiIndexFromDisk()
+    if (onDisk) {
+      return onDisk
+    }
+
+    try {
+      const lockHandle = await open(lockPath, 'wx')
+      await lockHandle.close()
+      try {
+        await unlink(markerPath).catch(() => undefined)
+        const index = await generateApiIndexFromCollections()
+        await writeApiIndex(index)
+        return index
+      } finally {
+        await unlink(lockPath).catch(() => undefined)
+      }
+    } catch (error) {
+      const errno = (error as NodeJS.ErrnoException).code
+      if (errno !== 'EEXIST') {
+        throw error
+      }
+      await new Promise((resolve) => setTimeout(resolve, 100))
+    }
+  }
+
+  throw new Error('Timed out waiting for apiIndex.json generation')
+}
+
 /**
  * Generates API index by analyzing all content collections
  * Extracts versions, sections, pages, and tabs into a hierarchical structure
@@ -452,7 +509,17 @@ async function generateApiIndexFromCollections(): Promise<ApiIndex> {
  * @returns Promise resolving to complete API index structure
  */
 export async function generateApiIndex(): Promise<ApiIndex> {
-  return generateApiIndexFromCollections()
+  const onDisk = await readCompleteApiIndexFromDisk()
+  if (onDisk) {
+    return onDisk
+  }
+
+  if (!generateApiIndexPromise) {
+    generateApiIndexPromise = generateAndPersistApiIndex().finally(() => {
+      generateApiIndexPromise = null
+    })
+  }
+  return generateApiIndexPromise
 }
 
 /**
@@ -467,7 +534,12 @@ export async function writeApiIndex(index: ApiIndex): Promise<void> {
 
   try {
     await mkdir(outputDir, { recursive: true })
-    await writeFile(indexPath, JSON.stringify(index, null, 2))
+    const payload = JSON.stringify(index, null, 2)
+    const tempPath = join(outputDir, `.apiIndex.${process.pid}.json.tmp`)
+    await writeFile(tempPath, payload)
+    await rename(tempPath, indexPath)
+    const markerPath = join(outputDir, API_INDEX_COMPLETE_MARKER)
+    await writeFile(markerPath, `${Date.now()}\n`)
     console.log(`✓ Generated API index with ${index.versions.length} versions`)
   } catch (error) {
     console.error('Could not write API index file:', error)
@@ -481,21 +553,6 @@ export async function writeApiIndex(index: ApiIndex): Promise<void> {
  *
  * @returns Promise resolving to the generated API index
  */
-let indexWriteInFlight: Promise<ApiIndex> | null = null
-
 export async function generateAndWriteApiIndex(): Promise<ApiIndex> {
-  if (indexWriteInFlight) {
-    return indexWriteInFlight
-  }
-
-  indexWriteInFlight = generateApiIndex()
-    .then(async (index) => {
-      await writeApiIndex(index)
-      return index
-    })
-    .finally(() => {
-      indexWriteInFlight = null
-    })
-
-  return indexWriteInFlight
+  return generateAndPersistApiIndex()
 }

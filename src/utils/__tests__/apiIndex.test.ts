@@ -5,7 +5,17 @@
  * - Build-time: getApiIndex() imports static data from data.ts
  * - Runtime: fetchApiIndex() fetches /apiIndex.json via HTTP
  */
-import { getApiIndex, getVersions, getSections, getPages, getTabs, getExamples } from '../apiIndex/get'
+import {
+  getApiIndex,
+  getVersions,
+  getSections,
+  getPages,
+  getTabs,
+  getExamples,
+  API_INDEX_COMPLETE_MARKER,
+  waitForCompleteApiIndexOnDisk,
+} from '../apiIndex/get'
+import { generateAndPersistApiIndex, generateAndWriteApiIndex } from '../apiIndex/generate'
 import { createIndexKey } from '../apiHelpers'
 
 describe('getApiIndex (build-time)', () => {
@@ -319,6 +329,16 @@ describe('API Index architecture', () => {
     // Check examples keys
     const examplesKeys = Object.keys(index.examples)
     expect(examplesKeys.every(key => key.includes('::'))).toBe(true)
+  })
+
+  it('exports API_INDEX_COMPLETE_MARKER', () => {
+    expect(API_INDEX_COMPLETE_MARKER).toBe('.apiIndex.complete')
+  })
+
+  it('exports waitForCompleteApiIndexOnDisk, generateAndPersistApiIndex, and generateAndWriteApiIndex functions', () => {
+    expect(typeof waitForCompleteApiIndexOnDisk).toBe('function')
+    expect(typeof generateAndPersistApiIndex).toBe('function')
+    expect(typeof generateAndWriteApiIndex).toBe('function')
   })
 })
 
