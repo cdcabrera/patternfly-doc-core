@@ -2,7 +2,7 @@ import { join } from 'path'
 import { readFile } from 'fs/promises'
 import type { ApiIndex } from './generate'
 import { getOutputDir } from '../getOutputDir'
-import { createIndexKey } from'../apiHelpers';
+import { createIndexKey } from '../apiHelpers'
 
 /**
  * Reads and parses the API index file

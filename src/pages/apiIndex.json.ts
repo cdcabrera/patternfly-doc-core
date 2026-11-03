@@ -7,6 +7,7 @@ export const prerender = true
 export const GET: APIRoute = async () => {
   try {
     const index = await generateApiIndex()
+
     return new Response(JSON.stringify(index), {
       status: 200,
       headers: {

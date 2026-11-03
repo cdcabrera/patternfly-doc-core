@@ -2,6 +2,10 @@
 /* eslint-disable no-console */
 import { Command } from 'commander'
 import { build, dev, preview, sync } from 'astro'
+import {
+  precomputeExamplesByKey,
+  writePrecomputedExamplesCache,
+} from './precomputeExamplesByPath.js'
 import { dirname, join, resolve } from 'path'
 import {
   createCollectionContent,
@@ -18,9 +22,8 @@ import {
 } from './buildPropsData.js'
 import { hasFile } from './hasFile.js'
 import { convertToMDX } from './convertToMDX.js'
-import { mkdir, copyFile } from 'fs/promises'
+import { mkdir, copyFile, unlink } from 'fs/promises'
 import { fileURLToPath } from 'url'
-import { fileExists } from './fileExists.js'
 
 const currentDir = process.cwd()
 const config = await getConfig(`${currentDir}/pf-docs.config.mjs`)
@@ -99,49 +102,30 @@ async function transformMDContentToMDX(verbose = false) {
     ? resolve(currentDir, config.repoRoot)
     : currentDir
 
-  await Promise.all(
-    config.content.map(async (contentObj) => {
-      const globPath = resolveContentEntryGlob(
-        contentObj,
-        currentDir,
-        repoRootDir,
-        verbose,
+  for (const contentObj of config.content) {
+    const globPath = resolveContentEntryGlob(
+      contentObj,
+      currentDir,
+      repoRootDir,
+      verbose,
+    )
+
+    if (!globPath) {
+      throw new Error(
+        `Unable to resolve documentation content "${contentObj.name}". ` +
+          'Check its base or packageName configuration.',
       )
+    }
 
-      if (!globPath) {
-        throw new Error(
-          `Unable to resolve documentation content "${contentObj.name}". ` +
-            'Check its base or packageName configuration.',
-        )
-      }
-
-      await convertToMDX(globPath)
-    }),
-  )
+    await convertToMDX(globPath)
+  }
 }
 
-async function initializeApiIndex(program: Command) {
-  const { verbose } = program.opts()
-  const templateIndexPath = join(astroRoot, 'cli', 'templates', 'apiIndex.json')
-  const targetIndexPath = join(absoluteOutputDir, 'apiIndex.json')
-  const indexExists = await fileExists(targetIndexPath)
-
-  // early return if the file exists from a previous build
-  if (indexExists) {
-    if (verbose) {
-      console.log('apiIndex.json already exists, skipping initialization')
-    }
-    return
-  }
-
-  try {
-    await copyFile(templateIndexPath, targetIndexPath)
-    if (verbose) {
-      console.log('Initialized apiIndex.json')
-    }
-  } catch (e: any) {
-    console.error('Error copying apiIndex.json template:', e)
-  }
+async function prepareApiIndexExamples(docsConfig: DocsConfig) {
+  process.env.PF_DOCS_ROOT = currentDir
+  process.env.PF_DOCS_REQUIRE_PRECOMPUTED_EXAMPLES = 'true'
+  const precomputedExamples = await precomputeExamplesByKey(docsConfig, currentDir)
+  await writePrecomputedExamplesCache(absoluteOutputDir, precomputedExamples)
 }
 
 async function buildProject(program: Command): Promise<DocsConfig | undefined> {
@@ -167,7 +151,10 @@ async function buildProject(program: Command): Promise<DocsConfig | undefined> {
   await updateContent(program)
   await transformMDContentToMDX(verbose)
   await generateProps(program, true)
-  await initializeApiIndex(program)
+
+  // The root copy is published only after Astro has emitted a complete index.
+  await unlink(join(absoluteOutputDir, 'apiIndex.json')).catch(() => undefined)
+  await prepareApiIndexExamples(config)
 
   const docsOutputDir = join(absoluteOutputDir, 'docs')
 
@@ -175,6 +162,10 @@ async function buildProject(program: Command): Promise<DocsConfig | undefined> {
     root: astroRoot,
     outDir: docsOutputDir,
   })
+  await copyFile(
+    join(docsOutputDir, 'apiIndex.json'),
+    join(absoluteOutputDir, 'apiIndex.json'),
+  )
 
   return config
 }
@@ -239,9 +230,12 @@ program.command('start').action(async () => {
   if (apiOnly) {
     process.env.PF_API_ONLY = 'true'
   }
+  process.env.PF_DOCS_ROOT = currentDir
+  delete process.env.PF_DOCS_REQUIRE_PRECOMPUTED_EXAMPLES
   await updateContent(program)
   await transformMDContentToMDX(verbose)
-  await initializeApiIndex(program)
+  // The snapshot is build-only; dev reads current Astro content directly.
+  await unlink(join(absoluteOutputDir, '.precomputed-examples.json')).catch(() => undefined)
 
   // if a props file hasn't been generated yet, but the consumer has propsData, it will cause a runtime error so to
   // prevent that we're just creating a props file regardless of what they say if one doesn't exist yet

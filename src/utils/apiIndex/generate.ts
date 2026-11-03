@@ -1,6 +1,6 @@
 /* eslint-disable no-console */
 import { join } from 'path'
-import { writeFile, mkdir } from 'fs/promises'
+import { readFile } from 'fs/promises'
 import { getCollection } from 'astro:content'
 import type { CollectionKey } from 'astro:content'
 import { content } from '../../content'
@@ -83,7 +83,7 @@ function extractExamplesWithTitles(
 
   // Match <LiveExample> tags with src attribute containing an example name
   // Supports various attribute orders and spacing patterns
-  const exampleRegex = /<LiveExample[^>]*\ssrc=\{\s*(\w+)\s*\}[^>]*\/?>/g
+  const exampleRegex = /<LiveExample[^>]*src=\{\s*(\w+)\s*\}[^>]*\/?>/g
   const examples: { exampleName: string; title: string | null }[] = []
   const seen = new Set<string>()
   let match
@@ -106,15 +106,54 @@ function extractExamplesWithTitles(
   return examples
 }
 
+function mergeExampleLists(
+  existing: { exampleName: string; title: string | null }[],
+  incoming: { exampleName: string; title: string | null }[],
+): { exampleName: string; title: string | null }[] {
+  const merged = [...existing]
+  for (const ex of incoming) {
+    if (!merged.some((item) => item.exampleName === ex.exampleName)) {
+      merged.push(ex)
+    }
+  }
+  return merged
+}
+
+type PrecomputedExamplesByKey = Record<
+  string,
+  { exampleName: string; title: string | null }[]
+>
+
+async function readPrecomputedExamplesByKey(
+  outputDir: string,
+): Promise<PrecomputedExamplesByKey | null> {
+  const cachePath = join(outputDir, '.precomputed-examples.json')
+  try {
+    const raw = await readFile(cachePath, 'utf8')
+    const parsed = JSON.parse(raw) as PrecomputedExamplesByKey
+    if (!Object.values(parsed).every(Array.isArray)) {
+      throw new Error(`Invalid precomputed examples cache at ${cachePath}`)
+    }
+    return parsed
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code === 'ENOENT') {
+      if (process.env.PF_DOCS_REQUIRE_PRECOMPUTED_EXAMPLES === 'true') {
+        throw new Error(`Missing precomputed examples cache at ${cachePath}`)
+      }
+      return null
+    }
+    throw error
+  }
+}
+
 /**
- * Generates API index by analyzing all content collections
- * Extracts versions, sections, pages, and tabs into a hierarchical structure
- * This runs during build time when getCollection() is available
- *
- * @returns Promise resolving to complete API index structure
+ * Builds API index by analyzing all content collections.
  */
-export async function generateApiIndex(): Promise<ApiIndex> {
+async function generateApiIndexFromCollections(): Promise<ApiIndex> {
   console.log('Generating API index from content collections...')
+
+  const outputDir = await getOutputDir()
+  const precomputedExamplesByKey = await readPrecomputedExamplesByKey(outputDir)
 
   const index: ApiIndex = {
     versions: [],
@@ -140,27 +179,52 @@ export async function generateApiIndex(): Promise<ApiIndex> {
     const collectionsToFetch = content
       .filter((entry: any) => entry.version === version)
       .map((entry: any) => entry.name as CollectionKey)
+      .sort((a, b) => String(a).localeCompare(String(b)))
 
-    const collections = await Promise.all(
-      collectionsToFetch.map((name) => getCollection(name)),
+    const flatEntries: (Awaited<ReturnType<typeof getCollection>>[number] & {
+      base?: string
+    })[] = []
+    for (const name of collectionsToFetch) {
+      const contentDef = content.find(
+        (entry: any) => entry.name === name && entry.version === version,
+      )
+      const collectionEntries = await getCollection(name)
+      for (const entry of collectionEntries) {
+        flatEntries.push({ ...entry, base: contentDef?.base })
+      }
+    }
+    flatEntries.sort((a, b) => String(a.filePath).localeCompare(String(b.filePath)))
+
+    const mdSourcesWithMdx = new Set(
+      flatEntries
+        .map((entry) => entry.filePath)
+        .filter((filePath): filePath is string => filePath?.endsWith('.mdx') ?? false)
+        .map((filePath) => `${filePath.slice(0, -4)}.md`),
     )
-
-    const flatEntries = collections.flat()
 
     // Collect sections, pages, and tabs in a single pass
     const sections = new Set<string>()
     const sectionPages: Record<string, Set<string>> = {}
     const pageTabs: Record<string, Set<string>> = {}
-    const tabExamples: Record<string, { exampleName: string; title: string | null }[]> = {}
+    let tabExamples: Record<string, { exampleName: string; title: string | null }[]> = {}
     const pageCss: Record<string, { name: string; value: string; var: string }[]> = {}
     const pageCssPrefixes: Record<string, string | string[]> = {}
     const deprecatedPropComponents: Record<string, string[]> = {}
 
-    flatEntries.forEach((entry: any) => {
+    for (const entry of flatEntries) {
       const { section, subsection, id } = entry.data
       if (!section) {
-        return
+        continue
       }
+
+      if (
+        entry.filePath?.endsWith('.md') &&
+        mdSourcesWithMdx.has(entry.filePath)
+      ) {
+        continue
+      }
+
+      const pathForTabLogic = String(entry.filePath || '')
 
       // Flatten subsections into page name using underscores
       // e.g., subsection="forms", id="checkbox" becomes page="forms_checkbox"
@@ -182,8 +246,10 @@ export async function generateApiIndex(): Promise<ApiIndex> {
 
       // Collect tab
       const entryTab =
-        entry.data.tab || entry.data.source || getDefaultTabForApi(entry.filePath)
-      const tab = addDemosOrDeprecated(entryTab, entry.filePath)
+        entry.data.tab ||
+        entry.data.source ||
+        getDefaultTabForApi(pathForTabLogic)
+      const tab = addDemosOrDeprecated(entryTab, pathForTabLogic)
       if (!pageTabs[tabKey]) {
         pageTabs[tabKey] = new Set()
       }
@@ -196,11 +262,16 @@ export async function generateApiIndex(): Promise<ApiIndex> {
         deprecatedPropComponents[tabKey] = [...new Set<string>(entry.data.propComponents)]
       }
 
-      // Collect examples for this tab
-      const exampleKey = `${tabKey}::${tab}`
-      const examplesWithTitles = extractExamplesWithTitles(entry.body || '')
-      if (examplesWithTitles.length > 0) {
-        tabExamples[exampleKey] = examplesWithTitles
+      // Development mode has no pre-build snapshot. Production builds always use it.
+      if (!precomputedExamplesByKey) {
+        const exampleKey = `${tabKey}::${tab}`
+        const examplesWithTitles = extractExamplesWithTitles(entry.body || '')
+        if (examplesWithTitles.length > 0) {
+          tabExamples[exampleKey] = mergeExampleLists(
+            tabExamples[exampleKey] || [],
+            examplesWithTitles,
+          )
+        }
       }
 
       // Collect CSS prefixes for pages - we'll extract tokens later
@@ -208,7 +279,7 @@ export async function generateApiIndex(): Promise<ApiIndex> {
       if (entry.data.cssPrefix && !pageCssPrefixes[tabKey]) {
         pageCssPrefixes[tabKey] = entry.data.cssPrefix
       }
-    })
+    }
 
     Object.entries(deprecatedPropComponents).forEach(([key, propComponents]) => {
       if (!index.propComponents![key]) {
@@ -242,9 +313,25 @@ export async function generateApiIndex(): Promise<ApiIndex> {
       index.tabs[key] = Array.from(tabs).sort(sortSources)
     })
 
-    Object.entries(tabExamples).forEach(([key, examples]) => {
-      index.examples[key] = examples
-    })
+    if (precomputedExamplesByKey) {
+      tabExamples = {}
+      for (const [key, examples] of Object.entries(precomputedExamplesByKey)) {
+        if (!key.startsWith(`${version}::`)) {
+          continue
+        }
+        tabExamples[key] = [...examples].sort((a, b) =>
+          a.exampleName.localeCompare(b.exampleName),
+        )
+      }
+    }
+
+    Object.entries(tabExamples)
+      .sort(([a], [b]) => a.localeCompare(b))
+      .forEach(([key, examples]) => {
+        index.examples[key] = [...examples].sort((a, b) =>
+          a.exampleName.localeCompare(b.exampleName),
+        )
+      })
 
     // Add CSS token objects to index
     Object.entries(pageCss).forEach(([key, tokens]) => {
@@ -256,46 +343,16 @@ export async function generateApiIndex(): Promise<ApiIndex> {
 }
 
 /**
- * Writes API index to a apiIndex.json file in the user defined output directory
- * This file is used by server-side API routes to avoid runtime getCollection() calls
- *
- * @param index - The API index structure to write
+ * Coalesces concurrent route generation without writing shared build output.
+ * Astro's /apiIndex.json endpoint is the sole producer of the emitted file.
  */
-export async function writeApiIndex(index: ApiIndex): Promise<void> {
-  const outputDir = await getOutputDir()
-  const indexPath = join(outputDir, 'apiIndex.json')
+let generateApiIndexPromise: Promise<ApiIndex> | null = null
 
-  try {
-    await mkdir(outputDir, { recursive: true })
-    await writeFile(indexPath, JSON.stringify(index, null, 2))
-    console.log(`✓ Generated API index with ${index.versions.length} versions`)
-  } catch (error) {
-    console.error('Could not write API index file:', error)
-    throw error
-  }
-}
-
-/**
- * Generates and writes API index in a single operation
- * Called during build in getStaticPaths to ensure index exists for server routes
- *
- * @returns Promise resolving to the generated API index
- */
-let indexWriteInFlight: Promise<ApiIndex> | null = null
-
-export async function generateAndWriteApiIndex(): Promise<ApiIndex> {
-  if (indexWriteInFlight) {
-    return indexWriteInFlight
-  }
-
-  indexWriteInFlight = generateApiIndex()
-    .then(async (index) => {
-      await writeApiIndex(index)
-      return index
+export async function generateApiIndex(): Promise<ApiIndex> {
+  if (!generateApiIndexPromise) {
+    generateApiIndexPromise = generateApiIndexFromCollections().finally(() => {
+      generateApiIndexPromise = null
     })
-    .finally(() => {
-      indexWriteInFlight = null
-    })
-
-  return indexWriteInFlight
+  }
+  return generateApiIndexPromise
 }

@@ -1,20 +1,26 @@
-import { readFile, writeFile } from 'fs/promises'
+import { readFile } from 'fs/promises'
 import { getCollection } from 'astro:content'
 import { GET } from '../../pages/api/component-index.json'
-import {
-  generateAndWriteApiIndex,
-  generateApiIndex,
-} from '../apiIndex/generate'
+import { generateApiIndex } from '../apiIndex/generate'
 
 jest.mock('fs/promises', () => ({
   readFile: jest.fn(),
-  writeFile: jest.fn(),
-  mkdir: jest.fn(),
 }))
 jest.mock('astro:content', () => ({ getCollection: jest.fn() }))
 jest.mock('../../content', () => ({ content: [{ name: 'react-component-docs', version: 'v6' }] }))
 jest.mock('../getOutputDir', () => ({ getOutputDir: jest.fn().mockResolvedValue('/output') }))
 jest.mock('../extractReactTokens', () => ({ extractReactTokens: jest.fn().mockResolvedValue([]) }))
+
+const precomputedExamples = {
+  'v6::foundations-and-styles::layouts_flex::react': [
+    { exampleName: 'FlexBasic', title: 'Basic flex' },
+  ],
+}
+
+const propsData = Object.fromEntries(
+  ['Nav', 'NavItem', 'FileUpload', 'FileUploadField', 'ActionGroup', 'Form', 'Flex', 'FlexItem', 'Chip-deprecated', 'ChipGroup-deprecated', 'Table', 'DataViewTable'].map((name) => [name, { name, props: [] }]),
+)
+const originalRequirePrecomputed = process.env.PF_DOCS_REQUIRE_PRECOMPUTED_EXAMPLES
 
 beforeEach(() => {
   jest.clearAllMocks()
@@ -28,14 +34,25 @@ beforeEach(() => {
     { data: { section: 'components', id: 'Chip', tab: 'react-deprecated', propComponents: ['Chip', 'ChipGroup'] }, body: '', filePath: '/deprecated/components/Chip.md' },
     { data: { section: 'components', id: 'Table', tab: 'react', propComponents: ['Table'] }, body: '', filePath: '/components/Table.md' },
     { data: { section: 'extensions', subsection: 'data-view', id: 'Table', tab: 'react', propComponents: ['DataViewTable'] }, body: '', filePath: '/extensions/DataViewTable.md' },
-    { data: { section: 'foundations-and-styles', subsection: 'layouts', id: 'Flex', tab: 'react', propComponents: ['Flex', 'FlexItem'] }, body: '### Basic flex\n<LiveExample src={FlexBasic} />', filePath: '/layouts/Flex.md' },
+    { data: { section: 'foundations-and-styles', subsection: 'layouts', id: 'Flex', tab: 'react', propComponents: ['Flex', 'FlexItem'] }, body: '', filePath: '/layouts/Flex.md' },
   ])
-  ;(readFile as jest.Mock).mockResolvedValue(JSON.stringify(Object.fromEntries(
-    ['Nav', 'NavItem', 'FileUpload', 'FileUploadField', 'ActionGroup', 'Form', 'Flex', 'FlexItem', 'Chip-deprecated', 'ChipGroup-deprecated', 'Table', 'DataViewTable'].map((name) => [name, { name, props: [] }]),
-  )))
+  ;(readFile as jest.Mock).mockImplementation((filePath: string) =>
+    Promise.resolve(JSON.stringify(
+      filePath === '/output/.precomputed-examples.json'
+        ? precomputedExamples
+        : propsData,
+    )),
+  )
 })
 
-afterEach(() => jest.restoreAllMocks())
+afterEach(() => {
+  if (originalRequirePrecomputed === undefined) {
+    delete process.env.PF_DOCS_REQUIRE_PRECOMPUTED_EXAMPLES
+  } else {
+    process.env.PF_DOCS_REQUIRE_PRECOMPUTED_EXAMPLES = originalRequirePrecomputed
+  }
+  jest.restoreAllMocks()
+})
 
 it('retains active frontmatter mappings without HTML or deprecated entries overwriting them', async () => {
   const index = await generateApiIndex()
@@ -62,26 +79,42 @@ it('indexes current collections, preserving page keys and exposing documented me
     expect(components.DataViewTable).toMatchObject({ page: 'data-view_table', component: 'DataViewTable', hasProps: true })
   expect(components.Flex).toMatchObject({ page: 'layouts_flex', tabs: ['react'], exampleCount: 1 })
   expect(components.Form).toMatchObject({ hasProps: true })
-  // Only props are read from disk: an old apiIndex.json cannot seed the new index.
-  expect(readFile).toHaveBeenCalledTimes(1)
+  expect(readFile).toHaveBeenCalledTimes(2)
+  expect(readFile).toHaveBeenCalledWith('/output/.precomputed-examples.json', 'utf8')
   expect(readFile).toHaveBeenCalledWith('/output/props.json', 'utf-8')
 })
 
-it('coalesces concurrent API index writes', async () => {
+it('requires the prepared snapshot during a CLI build', async () => {
+  process.env.PF_DOCS_REQUIRE_PRECOMPUTED_EXAMPLES = 'true'
+  const missingCache = Object.assign(new Error('ENOENT'), { code: 'ENOENT' })
+  ;(readFile as jest.Mock).mockRejectedValueOnce(missingCache)
+
+  await expect(generateApiIndex()).rejects.toThrow(
+    'Missing precomputed examples cache at /output/.precomputed-examples.json',
+  )
+})
+
+it('coalesces concurrent API index generation', async () => {
   const [firstIndex, secondIndex] = await Promise.all([
-    generateAndWriteApiIndex(),
-    generateAndWriteApiIndex(),
+    generateApiIndex(),
+    generateApiIndex(),
   ])
 
   expect(firstIndex).toEqual(secondIndex)
-  expect(writeFile).toHaveBeenCalledTimes(1)
+  expect(getCollection).toHaveBeenCalledTimes(1)
 })
 
 it('only advertises deprecated props when the suffixed record exists', async () => {
-  ;(readFile as jest.Mock).mockResolvedValue(JSON.stringify({
-    Chip: { name: 'Chip', props: [] },
-    'ChipGroup-deprecated': { name: 'ChipGroup', props: [] },
-  }))
+  ;(readFile as jest.Mock).mockImplementation((filePath: string) =>
+    Promise.resolve(JSON.stringify(
+      filePath === '/output/.precomputed-examples.json'
+        ? precomputedExamples
+        : {
+            Chip: { name: 'Chip', props: [] },
+            'ChipGroup-deprecated': { name: 'ChipGroup', props: [] },
+          },
+    )),
+  )
 
   const response = await GET({} as any)
   const { components } = await response.json()
