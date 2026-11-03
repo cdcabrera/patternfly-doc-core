@@ -1,8 +1,9 @@
-import { join } from 'path'
+import { join, resolve } from 'path'
 import { getConfig } from '../../cli/getConfig'
 
 export async function getOutputDir(): Promise<string> {
-  const config = await getConfig(join(process.cwd(), 'pf-docs.config.mjs'))
+  const configPath = join(process.cwd(), 'pf-docs.config.mjs')
+  const config = await getConfig(configPath)
   if (!config) {
     throw new Error(
       'No config found, please run the `setup` command or manually create a pf-docs.config.mjs file',
@@ -15,5 +16,5 @@ export async function getOutputDir(): Promise<string> {
     )
   }
 
-  return config.outputDir
+  return resolve(process.cwd(), config.outputDir)
 }
