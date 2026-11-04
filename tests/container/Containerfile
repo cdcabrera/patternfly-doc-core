@@ -20,9 +20,9 @@ RUN corepack enable
 WORKDIR /patternfly-org
 
 ARG ORG_REPO=https://github.com/patternfly/patternfly-org.git
-ARG ORG_REF=8e08661e4e3f58644570bc9a4db75eb7884f3947
+ARG ORG_REF
 
-# ORG_REF may be a branch or a pinned commit SHA.
+# run.sh resolves `latest` once and passes its commit SHA here.
 RUN git init . \
     && git remote add origin "${ORG_REPO}" \
     && git fetch --depth 1 origin "${ORG_REF}" \

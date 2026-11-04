@@ -1,11 +1,15 @@
 #!/usr/bin/env bash
-# Build the local package once, then run two fresh PatternFly Org builds.
+# Resolve one PatternFly Org revision, then run two fresh builds with local doc-core.
 set -euo pipefail
 
 ROOT_DIR="$(cd "$(dirname "$0")/../.." && pwd)"
 OUTPUT_DIR="${ROOT_DIR}/tests/container/output"
-ORG_REF="${ORG_REF:-8e08661e4e3f58644570bc9a4db75eb7884f3947}"
+ORG_REF="${ORG_REF:-latest}"
 ORG_REPO="${ORG_REPO:-https://github.com/patternfly/patternfly-org.git}"
+
+if [[ "${ORG_REF}" == "latest" ]]; then
+  ORG_REF="$(git ls-remote "${ORG_REPO}" HEAD | awk 'NR == 1 { print $1 }')"
+fi
 
 if command -v podman >/dev/null 2>&1; then
   CONTAINER_ENGINE="podman"
